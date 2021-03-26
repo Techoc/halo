@@ -1,18 +1,14 @@
 plugins {
-    id "org.springframework.boot" version "2.4.0"
-    id "io.spring.dependency-management" version "1.0.10.RELEASE"
+    id "org.springframework.boot" version "2.5.0-M2"
+    id "io.spring.dependency-management" version "1.0.11.RELEASE"
     id "checkstyle"
     id "java"
 }
 
 group = "run.halo.app"
-version = "1.4.2"
+version = "1.4.7"
 description = "Halo, An excellent open source blog publishing application."
-
-java {
-    archivesBaseName = "halo"
-    sourceCompatibility = JavaVersion.VERSION_11
-}
+sourceCompatibility = JavaVersion.VERSION_11
 
 checkstyle {
     toolVersion = "8.39"
@@ -22,10 +18,11 @@ checkstyle {
 
 repositories {
     mavenLocal()
-    maven {
-        url "https://maven.aliyun.com/nexus/content/groups/public"
-    }
+//    maven {
+//        url "https://maven.aliyun.com/nexus/content/groups/public"
+//    }
     mavenCentral()
+    maven { url 'https://repo.spring.io/milestone' }
     jcenter()
 }
 
@@ -103,6 +100,8 @@ ext {
     zxingVersion = "3.4.0"
     huaweiObsVersion = "3.19.7"
     githubApiVersion = "1.84"
+    templateInheritanceVersion = "0.4.RELEASE"
+    jsoupVersion = "1.13.1"
 }
 
 dependencies {
@@ -148,6 +147,7 @@ dependencies {
     implementation "com.vladsch.flexmark:flexmark-ext-yaml-front-matter:$flexmarkVersion"
     implementation "com.vladsch.flexmark:flexmark-ext-gitlab:$flexmarkVersion"
 
+    implementation "kr.pe.kwonnam.freemarker:freemarker-template-inheritance:$templateInheritanceVersion"
     implementation "net.coobird:thumbnailator:$thumbnailatorVersion"
     implementation "net.sf.image4j:image4j:$image4jVersion"
     implementation "org.flywaydb:flyway-core:$flywayVersion"
@@ -166,10 +166,19 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test") {
         exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
     }
+    testImplementation("org.jsoup:jsoup:${jsoupVersion}")
 
     developmentOnly "org.springframework.boot:spring-boot-devtools"
 }
 
 test {
     useJUnitPlatform()
+    testLogging.showStandardStreams = true
+}
+
+task projectVersion {
+    description = 'Prints current project version.'
+    doLast {
+        println project.version
+    }
 }

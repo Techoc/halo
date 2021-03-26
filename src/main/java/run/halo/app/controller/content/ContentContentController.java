@@ -1,10 +1,9 @@
 package run.halo.app.controller.content;
 
-import cn.hutool.core.util.IdUtil;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.TimeUnit;
+import javax.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Controller;
@@ -14,7 +13,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import run.halo.app.cache.AbstractStringCacheStore;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import run.halo.app.cache.lock.CacheLock;
 import run.halo.app.controller.content.model.CategoryModel;
 import run.halo.app.controller.content.model.JournalModel;
@@ -24,12 +24,17 @@ import run.halo.app.controller.content.model.PostModel;
 import run.halo.app.controller.content.model.SheetModel;
 import run.halo.app.controller.content.model.TagModel;
 import run.halo.app.exception.NotFoundException;
+import run.halo.app.exception.UnsupportedException;
+import run.halo.app.model.dto.CategoryDTO;
 import run.halo.app.model.dto.post.BasePostMinimalDTO;
 import run.halo.app.model.entity.Post;
 import run.halo.app.model.entity.Sheet;
+import run.halo.app.model.enums.EncryptTypeEnum;
 import run.halo.app.model.enums.PostPermalinkType;
 import run.halo.app.model.enums.PostStatus;
 import run.halo.app.model.enums.SheetPermalinkType;
+import run.halo.app.service.AuthenticationService;
+import run.halo.app.service.CategoryService;
 import run.halo.app.service.OptionService;
 import run.halo.app.service.PostService;
 import run.halo.app.service.SheetService;
@@ -63,7 +68,9 @@ public class ContentContentController {
 
     private final SheetService sheetService;
 
-    private final AbstractStringCacheStore cacheStore;
+    private final AuthenticationService authenticationService;
+
+    private final CategoryService categoryService;
 
     public ContentContentController(PostModel postModel,
         SheetModel sheetModel,
@@ -75,7 +82,8 @@ public class ContentContentController {
         OptionService optionService,
         PostService postService,
         SheetService sheetService,
-        AbstractStringCacheStore cacheStore) {
+        AuthenticationService authenticationService,
+        CategoryService categoryService) {
         this.postModel = postModel;
         this.sheetModel = sheetModel;
         this.categoryModel = categoryModel;
@@ -86,17 +94,14 @@ public class ContentContentController {
         this.optionService = optionService;
         this.postService = postService;
         this.sheetService = sheetService;
-        this.cacheStore = cacheStore;
+        this.authenticationService = authenticationService;
+        this.categoryService = categoryService;
     }
 
     @GetMapping("{prefix}")
     public String content(@PathVariable("prefix") String prefix,
         @RequestParam(value = "token", required = false) String token,
         Model model) {
-        if (optionService.getSheetPermalinkType().equals(SheetPermalinkType.ROOT)) {
-            Sheet sheet = sheetService.getBySlug(prefix);
-            return sheetModel.content(sheet, token, model);
-        }
         if (optionService.getArchivesPrefix().equals(prefix)) {
             return postModel.archives(1, model);
         }
@@ -115,12 +120,18 @@ public class ContentContentController {
         if (optionService.getLinksPrefix().equals(prefix)) {
             return linkModel.list(model);
         }
-        return null;
+        if (optionService.getSheetPermalinkType().equals(SheetPermalinkType.ROOT)) {
+            Sheet sheet = sheetService.getBySlug(prefix);
+            return sheetModel.content(sheet, token, model);
+        }
+
+        throw buildPathNotFoundException();
     }
 
     @GetMapping("{prefix}/page/{page:\\d+}")
     public String content(@PathVariable("prefix") String prefix,
         @PathVariable(value = "page") Integer page,
+        HttpServletRequest request,
         Model model) {
         if (optionService.getArchivesPrefix().equals(prefix)) {
             return postModel.archives(page, model);
@@ -134,7 +145,7 @@ public class ContentContentController {
             return photoModel.list(page, model);
         }
 
-        throw new NotFoundException("Not Found");
+        throw buildPathNotFoundException();
     }
 
     @GetMapping("{prefix}/{slug}")
@@ -155,12 +166,6 @@ public class ContentContentController {
             }
         }
 
-        if (optionService.getSheetPermalinkType().equals(SheetPermalinkType.SECONDARY)
-            && optionService.getSheetPrefix().equals(prefix)) {
-            Sheet sheet = sheetService.getBySlug(slug);
-            return sheetModel.content(sheet, token, model);
-        }
-
         if (optionService.getCategoriesPrefix().equals(prefix)) {
             return categoryModel.listPost(model, slug, 1);
         }
@@ -175,7 +180,13 @@ public class ContentContentController {
             return postModel.content(post, token, model);
         }
 
-        throw new NotFoundException("Not Found");
+        if (optionService.getSheetPermalinkType().equals(SheetPermalinkType.SECONDARY)
+            && optionService.getSheetPrefix().equals(prefix)) {
+            Sheet sheet = sheetService.getBySlug(slug);
+            return sheetModel.content(sheet, token, model);
+        }
+
+        throw buildPathNotFoundException();
     }
 
     @GetMapping("{prefix}/{slug}/page/{page:\\d+}")
@@ -191,7 +202,7 @@ public class ContentContentController {
             return tagModel.listPost(model, slug, page);
         }
 
-        throw new NotFoundException("Not Found");
+        throw buildPathNotFoundException();
     }
 
     @GetMapping("{year:\\d+}/{month:\\d+}/{slug}")
@@ -206,7 +217,7 @@ public class ContentContentController {
             return postModel.content(post, token, model);
         }
 
-        throw new NotFoundException("Not Found");
+        throw buildPathNotFoundException();
     }
 
     @GetMapping("{year:\\d+}/{month:\\d+}/{day:\\d+}/{slug}")
@@ -222,16 +233,45 @@ public class ContentContentController {
             return postModel.content(post, token, model);
         }
 
-        throw new NotFoundException("Not Found");
+        throw buildPathNotFoundException();
     }
 
-    @PostMapping(value = "archives/{slug:.*}/password")
+    @PostMapping(value = "content/{type}/{slug:.*}/authentication")
     @CacheLock(traceRequest = true, expired = 2)
-    public String password(@PathVariable("slug") String slug,
+    public String password(@PathVariable("type") String type,
+        @PathVariable("slug") String slug,
         @RequestParam(value = "password") String password) throws UnsupportedEncodingException {
+
+        String redirectUrl;
+
+        if (EncryptTypeEnum.POST.getName().equals(type)) {
+            redirectUrl = doAuthenticationPost(slug, password);
+        } else if (EncryptTypeEnum.CATEGORY.getName().equals(type)) {
+            redirectUrl = doAuthenticationCategory(slug, password);
+        } else {
+            throw new UnsupportedException("未知的加密类型");
+        }
+        return "redirect:" + redirectUrl;
+    }
+
+    private NotFoundException buildPathNotFoundException() {
+        var requestAttributes = RequestContextHolder.currentRequestAttributes();
+
+        var requestUri = "";
+        if (requestAttributes instanceof ServletRequestAttributes) {
+            requestUri =
+                ((ServletRequestAttributes) requestAttributes).getRequest().getRequestURI();
+        }
+        return new NotFoundException("无法定位到该路径：" + requestUri);
+    }
+
+    private String doAuthenticationPost(
+        String slug, String password) throws UnsupportedEncodingException {
         Post post = postService.getBy(PostStatus.INTIMATE, slug);
 
         post.setSlug(URLEncoder.encode(post.getSlug(), StandardCharsets.UTF_8.name()));
+
+        authenticationService.postAuthentication(post, password);
 
         BasePostMinimalDTO postMinimalDTO = postService.convertToMinimal(post);
 
@@ -243,19 +283,23 @@ public class ContentContentController {
 
         redirectUrl.append(postMinimalDTO.getFullPath());
 
-        if (password.equals(post.getPassword())) {
-            String token = IdUtil.simpleUUID();
-            cacheStore.putAny(token, token, 10, TimeUnit.SECONDS);
+        return redirectUrl.toString();
+    }
 
-            if (optionService.getPostPermalinkType().equals(PostPermalinkType.ID)) {
-                redirectUrl.append("&token=")
-                    .append(token);
-            } else {
-                redirectUrl.append("?token=")
-                    .append(token);
-            }
+    private String doAuthenticationCategory(String slug, String password) {
+        CategoryDTO
+            category = categoryService.convertTo(categoryService.getBySlugOfNonNull(slug, true));
+
+        authenticationService.categoryAuthentication(category.getId(), password);
+
+        StringBuilder redirectUrl = new StringBuilder();
+
+        if (!optionService.isEnabledAbsolutePath()) {
+            redirectUrl.append(optionService.getBlogBaseUrl());
         }
 
-        return "redirect:" + redirectUrl;
+        redirectUrl.append(category.getFullPath());
+
+        return redirectUrl.toString();
     }
 }

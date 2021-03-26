@@ -72,15 +72,12 @@ public class OptionServiceImpl extends AbstractCrudService<Option, Integer>
     private final AbstractStringCacheStore cacheStore;
     private final Map<String, PropertyEnum> propertyEnumMap;
     private final ApplicationEventPublisher eventPublisher;
-    private final HaloProperties haloProperties;
 
-    public OptionServiceImpl(HaloProperties haloProperties,
-        OptionRepository optionRepository,
+    public OptionServiceImpl(OptionRepository optionRepository,
         ApplicationContext applicationContext,
         AbstractStringCacheStore cacheStore,
         ApplicationEventPublisher eventPublisher) {
         super(optionRepository);
-        this.haloProperties = haloProperties;
         this.optionRepository = optionRepository;
         this.applicationContext = applicationContext;
         this.cacheStore = cacheStore;
@@ -136,7 +133,7 @@ public class OptionServiceImpl extends AbstractCrudService<Option, Integer>
         if (!CollectionUtils.isEmpty(optionsToUpdate)
             || !CollectionUtils.isEmpty(optionsToCreate)) {
             // If there is something changed
-            publishOptionUpdatedEvent();
+            eventPublisher.publishEvent(new OptionUpdatedEvent(this));
         }
 
     }
@@ -156,7 +153,7 @@ public class OptionServiceImpl extends AbstractCrudService<Option, Integer>
     public void save(OptionParam optionParam) {
         Option option = optionParam.convertTo();
         create(option);
-        publishOptionUpdatedEvent();
+        eventPublisher.publishEvent(new OptionUpdatedEvent(this));
     }
 
     @Override
@@ -164,7 +161,7 @@ public class OptionServiceImpl extends AbstractCrudService<Option, Integer>
         Option optionToUpdate = getById(optionId);
         optionParam.update(optionToUpdate);
         update(optionToUpdate);
-        publishOptionUpdatedEvent();
+        eventPublisher.publishEvent(new OptionUpdatedEvent(this));
     }
 
     @Override
@@ -271,7 +268,7 @@ public class OptionServiceImpl extends AbstractCrudService<Option, Integer>
     @Override
     public Option removePermanently(Integer id) {
         Option deletedOption = removeById(id);
-        publishOptionUpdatedEvent();
+        eventPublisher.publishEvent(new OptionUpdatedEvent(this));
         return deletedOption;
     }
 
@@ -629,7 +626,7 @@ public class OptionServiceImpl extends AbstractCrudService<Option, Integer>
             replaced.add(option);
         });
         List<Option> updated = updateInBatch(replaced);
-        publishOptionUpdatedEvent();
+        eventPublisher.publishEvent(new OptionUpdatedEvent(this));
         return updated.stream().map(this::convertToDto).collect(Collectors.toList());
     }
 
@@ -640,10 +637,12 @@ public class OptionServiceImpl extends AbstractCrudService<Option, Integer>
         return new OptionSimpleDTO().convertFrom(option);
     }
 
+    @Deprecated
     private void cleanCache() {
         cacheStore.delete(OPTIONS_KEY);
     }
 
+    @Deprecated
     private void publishOptionUpdatedEvent() {
         flush();
         cleanCache();

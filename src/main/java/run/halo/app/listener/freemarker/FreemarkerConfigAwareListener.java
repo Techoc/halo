@@ -1,13 +1,22 @@
 package run.halo.app.listener.freemarker;
 
+import static run.halo.app.model.support.HaloConst.OPTIONS_CACHE_KEY;
+
 import freemarker.template.Configuration;
+import freemarker.template.TemplateModel;
 import freemarker.template.TemplateModelException;
+import java.util.HashMap;
+import java.util.Map;
+import kr.pe.kwonnam.freemarker.inheritance.BlockDirective;
+import kr.pe.kwonnam.freemarker.inheritance.PutDirective;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationStartedEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+import run.halo.app.cache.AbstractStringCacheStore;
+import run.halo.app.core.freemarker.inheritance.ThemeExtendsDirective;
 import run.halo.app.event.options.OptionUpdatedEvent;
 import run.halo.app.event.theme.ThemeActivatedEvent;
 import run.halo.app.event.theme.ThemeUpdatedEvent;
@@ -41,16 +50,34 @@ public class FreemarkerConfigAwareListener {
 
     private final UserService userService;
 
+    private final AbstractStringCacheStore cacheStore;
+
     public FreemarkerConfigAwareListener(OptionService optionService,
         Configuration configuration,
         ThemeService themeService,
         ThemeSettingService themeSettingService,
-        UserService userService) {
+        UserService userService,
+        AbstractStringCacheStore cacheStore) throws TemplateModelException {
         this.optionService = optionService;
         this.configuration = configuration;
         this.themeService = themeService;
         this.themeSettingService = themeSettingService;
         this.userService = userService;
+        this.cacheStore = cacheStore;
+
+        this.initFreemarkerConfig();
+    }
+
+    private Map<String, TemplateModel> freemarkerLayoutDirectives() {
+        Map<String, TemplateModel> freemarkerLayoutDirectives = new HashMap<>();
+        freemarkerLayoutDirectives.put("extends", new ThemeExtendsDirective());
+        freemarkerLayoutDirectives.put("block", new BlockDirective());
+        freemarkerLayoutDirectives.put("put", new PutDirective());
+        return freemarkerLayoutDirectives;
+    }
+
+    private void initFreemarkerConfig() throws TemplateModelException {
+        configuration.setSharedVariable("layout", freemarkerLayoutDirectives());
     }
 
     @EventListener
@@ -65,15 +92,14 @@ public class FreemarkerConfigAwareListener {
     }
 
     @EventListener
-    public void onThemeActivatedEvent(ThemeActivatedEvent themeActivatedEvent)
-        throws TemplateModelException {
+    public void onThemeActivatedEvent(ThemeActivatedEvent themeActivatedEvent) {
         log.debug("Received theme activated event");
 
         loadThemeConfig();
     }
 
     @EventListener
-    public void onThemeUpdatedEvent(ThemeUpdatedEvent event) throws TemplateModelException {
+    public void onThemeUpdatedEvent(ThemeUpdatedEvent event) {
         log.debug("Received theme updated event");
 
         loadThemeConfig();
@@ -89,6 +115,10 @@ public class FreemarkerConfigAwareListener {
     @EventListener
     public void onOptionUpdate(OptionUpdatedEvent event) throws TemplateModelException {
         log.debug("Received option updated event");
+
+        // refresh options cache
+        optionService.flush();
+        cacheStore.delete(OPTIONS_CACHE_KEY);
 
         loadOptionsConfig();
         loadThemeConfig();
